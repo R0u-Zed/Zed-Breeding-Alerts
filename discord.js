@@ -1,15 +1,37 @@
 require("dotenv").config();
 const { Webhook } = require("discord-webhook-node");
-
 const breedingAlertWebhook = new Webhook(process.env.WEBHOOK_URL);
-
-const sendBreedingAlert = (horse_id, url, kyh_horse_url) => {
+const sendBreedingAlert = (
+  name,
+  genotype,
+  url,
+  kyh_horse_url,
+  img,
+  races,
+  winrate,
+  offspring,
+  mating_price
+) => {
   breedingAlertWebhook.setUsername("Breeding Alert");
-  breedingAlertWebhook.setAvatar(
-    "https://lh3.googleusercontent.com/8Uz1h-kSgt5hOI7t9Xzf8wtH9Q3G5VEY_oUhJBqUP-XWP17qHeEOufcFWY7SV-Sx5jSYOTCG73fMG0otrXuEEteRD_rM_jm2YZt5bg4=w600"
-  );
+  breedingAlertWebhook.setAvatar(img);
   breedingAlertWebhook.send(
-    horse_id + " has entered the Stud Market." + " " + url + " " + kyh_horse_url
+    genotype +
+      " " +
+      name +
+      " has entered the Stud Market at " +
+      mating_price +
+      "\n" +
+      " (" +
+      winrate +
+      "% winrate over " +
+      races +
+      " races) " +
+      url +
+      " " +
+      kyh_horse_url +
+      "\n Offspring Winrate: " +
+      offspring +
+      "%"
   );
 };
 

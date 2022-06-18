@@ -1,82 +1,82 @@
-//Imports
-require("dotenv").config();
-const axios = require("axios");
-const Web3Utils = require("web3-utils");
-const abiDecoder = require("abi-decoder");
-const { sendBreedingAlert } = require("./discord");
+const Web3 = require("web3");
+const web3 = new Web3(
+  "" // Add your Alchemy URL here.
+);
+// Functions
 const { getHorseInformation } = require("./zed");
-const abi = require("./abi.json");
-abiDecoder.addABI(abi);
-
-// Globals
-const breedingContractAddress = "0x7adbced399630dd11a97f2e2dc206911167071ae";
-const mainnet_url = "https://api.polygonscan.com/";
+const { sendBreedingAlert } = require("./discord");
+// Constants
 const zed_url = "https://zed.run/racehorse/";
 const kyh_url = "https://knowyourhorses.com/horses/";
-const checkedTransactions = [];
-const MaximumZNumber = 3;
-const Breed_Types = ["genesis"];
-
-// Get List of Transactions from Breeding Contract.
-const getTransactions = async (address) => {
-  // Polygon URL (Offset is how many transactions to pull each time)
-  const url = `${mainnet_url}/api?module=account&action=txlist&address=${address}&sort=desc&page=1&offset=100&apikey=${process.env.POLYGON_SCAN_API_KEY}`;
-  const { data } = await axios.get(url);
-  // Check Transactions for STUD Barn related Tx's
-  const studTransactions = checkForStud(data);
-};
-
-// Check Transactions for Horses entering the Stud Barn.
-const checkForStud = async (transactions) => {
-  const studTransactions = [];
-  for (transaction of transactions.result) {
-    //Check Transaction hasn't already been seen.
-    if (
-      checkedTransactions.filter((x) => x.hash === transaction.hash).length ===
-      0
-    ) {
-      // Decode the Input Data using the Breeding ABI Contract. Taken from Zed.run Source Files.
-      const decode_data = abiDecoder.decodeMethod(transaction.input);
-      if (decode_data !== undefined) {
-        // Check if Method is equal to Entering Stud Barn.
-        if (decode_data.params[1].value.includes("0x0cf414c8")) {
-          // Isolate the Decoded Horse ID from input data
-          const horse_id_encoded = decode_data.params[1].value.substring(
-            69,
-            74
-          );
-          // Convert decoded Horse ID to Hex & then Convert to ID.
-          const horse_id = Web3Utils.hexToNumber("0x" + horse_id_encoded);
-          // Search the Horse Info on Zed API
-          const horse_data = await getHorseInformation(horse_id);
-          const horse_url = zed_url + horse_id;
-          const kyh_horse_url = kyh_url + horse_id;
-          // Remove the Z to check the Genotype
-          const genotype = horse_data.genotype.replace("Z", "");
-          // If the Genotype is Below 3 && The horse is a genesis. Post the Breeding Alert.
-          if (
-            genotype < MaximumZNumber &&
-            Breed_Types.includes(horse_data.breed_type)
-          ) {
-            sendBreedingAlert(
-              horse_data.hash_info.name,
-              horse_url,
-              kyh_horse_url
-            );
-          }
-        }
-      }
+const Breed_Types = ["genesis", "legendary", "exclusive"];
+const win_rate = 0.15;
+const number_of_races = 50;
+// Web3 ETH Subscribe to Pending Transaction Events.
+const subscription = web3.eth.subscribe(
+  "logs",
+  {
+    address: "0x7adbced399630dd11a97f2e2dc206911167071ae", // Breeding Contract Address
+    topics: [
+      "0x597b23690eff5a748e9caeb1673aca23d360fa4591de869f7dfd0ce30408e0b5", // Enter into Stud
+    ],
+  },
+  async function (error, logs) {
+    if (error) {
+      console.log(error);
     }
-    checkedTransactions.push(transaction);
+    if (logs) {
+      // Decode the Log Data
+      const decodedLog = web3.eth.abi.decodeLog(
+        [
+          {
+            type: "uint256",
+            name: "horseid",
+          },
+          { type: "uint256", name: "matingPrice" },
+          { type: "uint256", name: "duration" },
+          { type: "uint256", name: "timestamp" },
+        ],
+        logs.data,
+        logs.topics
+      );
+      console.log(decodedLog);
+      checkHorseData(decodedLog);
+    }
   }
-  return studTransactions;
-};
-async function main() {
-  // Get new Blockchain Transactions every 10 Seconds.
-  setInterval(async () => {
-    console.log("Checking for new Transactions");
-    const transactions = await getTransactions(breedingContractAddress);
-  }, 30000);
-}
+);
 
-main();
+const checkHorseData = async (log_data) => {
+  // Poll the ZED API for Horse Data.
+  const zed_data = await getHorseInformation(log_data.horseid);
+  const zed_horse_url = zed_url + log_data.horseid;
+  const horse_race_count = zed_data.number_of_races;
+  const horse_win_count = zed_data.career.first;
+  const horse_win_rate = parseFloat(horse_win_count / horse_race_count).toFixed(
+    2
+  );
+  const converted_win_rate = parseFloat(horse_win_rate * 100).toFixed(2);
+  const kyh_horse_url = kyh_url + log_data.horseid;
+  // Remove the Z to check the Genotype
+  let genotype = zed_data.genotype.replace("Z", "");
+  // Figure out the Mating Price
+  let mating_price = web3.utils.fromWei(log_data.matingPrice);
+  if (
+    (genotype < 3 && zed_data.breed_type === "genesis") ||
+    (genotype < 11 &&
+      Breed_Types.includes(zed_data.breed_type) &&
+      horse_race_count > number_of_races &&
+      horse_win_rate > win_rate)
+  ) {
+    return sendBreedingAlert(
+      zed_data.hash_info.name,
+      zed_data.genotype,
+      zed_horse_url,
+      kyh_horse_url,
+      zed_data.img_url,
+      horse_race_count,
+      converted_win_rate,
+      zed_data.offspring_win_rate,
+      mating_price
+    );
+  }
+};
